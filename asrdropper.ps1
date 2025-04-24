@@ -1,6 +1,65 @@
-# === ASR Multi-Vector Dropper with Rule Testing ===
+# ─────────────────────────────────────────────────────
+#  Top‐level banner definition
+# ─────────────────────────────────────────────────────
+Clear-Host
+
+$banner = @'
+             .%*@-                           
+            -@::@:                               
+          .*%. =@.                               
+          .@:  #*%@@@@@@%=..                     
+          :@  .@+:...    ..:+%%@@@%+::....    .. 
+         .%+ .+#..-*#%@@#+-::.....  ..-*#%@*.... 
+         .=*#@@=...      ..:=+**%@%*+=-...%=.... 
+               ...            ...   ..-=+##...   
+                                                  
+                -%%%%%%%%%%%%%%%%%%%%%%%%%%=.    
+     *@%%%%%%%%%@+                     ..-%#.    
+      -@+.      #+                  .-@@+.       
+        :#@+:.  #+.             ..=@#:.       
+           .=*@@%#*=.         ..+%-.        
+               ....%=       ...%=.          
+                  .%=        .:@.                
+                 .@%. .%@@@@=. -@=               
+             ..-@%..=@=.    ..=@#:.            
+             .%%###%@. .....  *@####@:           
+             .%*===+@@%#****#@@%====@:           
+'@
+
+# ─────────────────────────────────────────────────────
+#  Menu function with boxed header
+# ─────────────────────────────────────────────────────
 function Show-Menu {
     Clear-Host
+
+    # build a 60-char wide border
+    $border = '*' * 60
+
+    # top border
+    Write-Host $border -ForegroundColor DarkCyan
+
+    # the ASCII art
+    Write-Host $banner
+
+    # middle border
+    Write-Host $border -ForegroundColor DarkCyan
+
+    # title line (pad to box width minus 2 for the stars)
+    $titleText   = 'ASRDROPPER'
+    $versionText = 'v1.0 - Use with Caution'
+    $contentWidth = $border.Length - 2
+
+    $titleLine   = '*' + $titleText.PadLeft( ([math]::Floor(($contentWidth + $titleText.Length)/2)) ).PadRight($contentWidth) + '*'
+    $versionLine = '*' + $versionText.PadLeft(([math]::Floor(($contentWidth + $versionText.Length)/2)) ).PadRight($contentWidth) + '*'
+
+    Write-Host $titleLine   -ForegroundColor Yellow
+    Write-Host $versionLine -ForegroundColor Yellow
+
+    # bottom border
+    Write-Host $border -ForegroundColor DarkCyan
+    Write-Host
+
+    # ── your existing menu below ──
     Write-Host "=== ASR Multi-Vector Dropper ===" -ForegroundColor Cyan
     Write-Host "Configure your test suite:"
     Write-Host "[1] Toggle: Execute Payloads ($Execute)"
@@ -14,21 +73,29 @@ function Show-Menu {
     Write-Host "[9] Choose Process for HTA/COM Launch ($ExternalProcess)"
     Write-Host "[A] Configure ASR Rules Testing" -ForegroundColor Yellow
     Write-Host "[0] Run Dropper with Selected Options"
-    Write-Host ""
+    Write-Host
+    #Write-Host "Choose an option:" -NoNewline
 }
 
-# === Global Config ===
-$Execute = $false
-$LogHtml = $true
-$Persist = $false
-$CreateShortcut = $false
-$Cleanup = $false
-$Signatures = $false
-$Evasion = $false
+# ─────────────────────────────────────────────────────
+#  Global defaults
+# ─────────────────────────────────────────────────────
+$Execute         = $false
+$LogHtml         = $true
+$Persist         = $false
+$CreateShortcut  = $false
+$Cleanup         = $false
+$Signatures      = $false
+$Evasion         = $false
 $ExternalProcess = "calc.exe"
-$PayloadCode = "Write-Output '[Stage 2] Payload Executed!'"
-$TestASR = $false
-$SelectedASRRules = @()
+$PayloadCode     = "Write-Output '[Stage 2] Payload Executed!'"
+$TestASR         = $false
+$SelectedASRRules= @()
+
+# ─────────────────────────────────────────────────────
+#  Kick it off
+# ─────────────────────────────────────────────────────
+Show-Menu
 
 # Define ASR Rules with their IDs (GUIDs) and descriptions
 $ASRRules = @(
