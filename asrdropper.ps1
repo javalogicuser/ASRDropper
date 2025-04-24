@@ -29,37 +29,24 @@ $banner = @'
 # ─────────────────────────────────────────────────────
 #  Menu function with boxed header
 # ─────────────────────────────────────────────────────
+
 function Show-Menu {
     Clear-Host
-
-    # build a 60-char wide border
     $border = '*' * 60
-
-    # top border
     Write-Host $border -ForegroundColor DarkCyan
-
-    # the ASCII art
     Write-Host $banner
-
-    # middle border
     Write-Host $border -ForegroundColor DarkCyan
 
-    # title line (pad to box width minus 2 for the stars)
     $titleText   = 'ASRDROPPER'
     $versionText = 'v1.0 - Use with Caution'
     $contentWidth = $border.Length - 2
-
-    $titleLine   = '*' + $titleText.PadLeft( ([math]::Floor(($contentWidth + $titleText.Length)/2)) ).PadRight($contentWidth) + '*'
-    $versionLine = '*' + $versionText.PadLeft(([math]::Floor(($contentWidth + $versionText.Length)/2)) ).PadRight($contentWidth) + '*'
-
-    Write-Host $titleLine   -ForegroundColor Yellow
+    $titleLine   = '*' + $titleText.PadLeft(([math]::Floor(($contentWidth + $titleText.Length)/2))).PadRight($contentWidth) + '*'
+    $versionLine = '*' + $versionText.PadLeft(([math]::Floor(($contentWidth + $versionText.Length)/2))).PadRight($contentWidth) + '*'
+    Write-Host $titleLine -ForegroundColor Yellow
     Write-Host $versionLine -ForegroundColor Yellow
-
-    # bottom border
     Write-Host $border -ForegroundColor DarkCyan
     Write-Host
 
-    # ── your existing menu below ──
     Write-Host "=== ASR Multi-Vector Dropper ===" -ForegroundColor Cyan
     Write-Host "Configure your test suite:"
     Write-Host "[1] Toggle: Execute Payloads ($Execute)"
@@ -72,10 +59,14 @@ function Show-Menu {
     Write-Host "[8] Select Stage-2 Payload Source"
     Write-Host "[9] Choose Process for HTA/COM Launch ($ExternalProcess)"
     Write-Host "[A] Configure ASR Rules Testing" -ForegroundColor Yellow
+    Write-Host "[C] Toggle: Upload Logs to Azure Blob ($UploadLogs)"
+    Write-Host "[Y] Generate YARA Signature Baits"
+    Write-Host "[Z] Generate All Payload Variants"
     Write-Host "[0] Run Dropper with Selected Options"
     Write-Host
     #Write-Host "Choose an option:" -NoNewline
 }
+
 
 # ─────────────────────────────────────────────────────
 #  Global defaults
@@ -795,7 +786,15 @@ $p5 = Join-Path $DropPath $fn_sig
 if ($Signatures) {
     # Set URL for Invoke-Mimikatz
     $mimikatzUrl = "https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Invoke-Mimikatz.ps1"
-    Set-Content $p5 '$x="Invoke-Mimikatz from '$mimikatzUrl' sekurlsa::logonpasswords SharpHound CobaltStrike";Write-Host "[YARA bait triggered]"'
+
+$mimikatzUrl = 'https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Invoke-Mimikatz.ps1'
+$payload = @"
+`$x = 'Invoke-Mimikatz from $mimikatzUrl sekurlsa::logonpasswords SharpHound CobaltStrike'
+Write-Host '[YARA bait triggered]'
+"@
+Set-Content -Path $p5 -Value $payload
+Write-Log "Injected YARA bait payload to $p5"
+
 }
 
 # === Shortcut
